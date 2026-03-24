@@ -341,7 +341,21 @@ buffer config ( only work `producer_type` = "async" )
 
     Specifies the max wait time when buffer is full, Default `5` seconds.
 
-Not support compression now.
+* `compression`
+
+    Specifies the compression codec for messages. Default `0` (none).
+    Available values: `request.COMPRESSION_NONE` (0), `request.COMPRESSION_GZIP` (1), `request.COMPRESSION_SNAPPY` (2), `request.COMPRESSION_LZ4` (3).
+    Currently only LZ4 is implemented. Requires `liblz4` installed on the system (e.g. `yum install lz4-devel` or `apt install liblz4-dev`).
+
+    ```lua
+    local request = require "resty.kafka.request"
+    local producer = require "resty.kafka.producer"
+
+    local bp = producer:new(broker_list, {
+        producer_type = "async",
+        compression = request.COMPRESSION_LZ4,
+    })
+    ```
 
 The third optional `cluster_name` specifies the name of the cluster, default `1` (yeah, it's number). You can Specifies different names when you have two or more kafka clusters. And this only works with `async` producer_type.
 

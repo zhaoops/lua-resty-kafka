@@ -191,10 +191,23 @@ function _M.bytes(self, str)
 end
 
 
-local function message_package(key, msg, message_version)
+-- compression codec constants
+local COMPRESSION_NONE  = 0
+local COMPRESSION_GZIP  = 1
+local COMPRESSION_SNAPPY = 2
+local COMPRESSION_LZ4   = 3
+
+_M.COMPRESSION_NONE   = COMPRESSION_NONE
+_M.COMPRESSION_GZIP   = COMPRESSION_GZIP
+_M.COMPRESSION_SNAPPY = COMPRESSION_SNAPPY
+_M.COMPRESSION_LZ4    = COMPRESSION_LZ4
+
+
+local function message_package(key, msg, message_version, attributes)
     local key = key or ""
     local key_len = #key
     local len = #msg
+    attributes = attributes or 0
 
     local req
     local head_len
@@ -202,8 +215,8 @@ local function message_package(key, msg, message_version)
         req = {
             -- MagicByte
             str_int8(1),
-            -- XX hard code no Compression
-            str_int8(0),
+            -- Attributes
+            str_int8(attributes),
             str_int64(ffi.new("int64_t", (ngx_now() * 1000))), -- timestamp
             str_int32(key_len),
             key,
@@ -216,8 +229,8 @@ local function message_package(key, msg, message_version)
         req = {
             -- MagicByte
             str_int8(0),
-            -- XX hard code no Compression
-            str_int8(0),
+            -- Attributes
+            str_int8(attributes),
             str_int32(key_len),
             key,
             str_int32(len),
@@ -231,28 +244,87 @@ local function message_package(key, msg, message_version)
 end
 
 
-function _M.message_set(self, messages, index)
+function _M.message_set(self, messages, index, compression)
     local req = self._req
     local off = self.offset
     local msg_set_size = 0
     local index = index or #messages
+    compression = compression or COMPRESSION_NONE
 
     local message_version = MESSAGE_VERSION_0
     if self.api_key == _M.ProduceRequest and self.api_version == API_VERSION_V2 then
         message_version = MESSAGE_VERSION_1
     end
 
-    for i = 1, index, 2 do
-        local crc32, str, msg_len = message_package(messages[i], messages[i + 1], message_version)
+    if compression == COMPRESSION_NONE then
+        for i = 1, index, 2 do
+            local crc32, str, msg_len = message_package(
+                messages[i], messages[i + 1], message_version)
 
-        req[off + 1] = str_int64(0) -- offset
-        req[off + 2] = str_int32(msg_len) -- include the crc32 length
+            req[off + 1] = str_int64(0) -- offset
+            req[off + 2] = str_int32(msg_len)
+            req[off + 3] = str_int32(crc32)
+            req[off + 4] = str
 
-        req[off + 3] = str_int32(crc32)
-        req[off + 4] = str
+            off = off + 4
+            msg_set_size = msg_set_size + msg_len + 12
+        end
+    else
+        local inner_parts = {}
+        local inner_size = 0
+
+        for i = 1, index, 2 do
+            local crc32_val, str, msg_len = message_package(
+                messages[i], messages[i + 1], message_version)
+
+            inner_parts[#inner_parts + 1] = str_int64(0)       -- offset
+            inner_parts[#inner_parts + 1] = str_int32(msg_len) -- message size
+            inner_parts[#inner_parts + 1] = str_int32(crc32_val)
+            inner_parts[#inner_parts + 1] = str
+
+            inner_size = inner_size + msg_len + 12
+        end
+
+        local inner_bytes = concat(inner_parts)
+
+        -- 压缩
+        local compressed, err
+        if compression == COMPRESSION_LZ4 then
+            local lz4 = require "resty.kafka.lz4"
+            compressed, err = lz4.compress(inner_bytes)
+        elseif compression == COMPRESSION_GZIP then
+            local zlib = require "zlib"
+            compressed = zlib.deflate(6, 31)(inner_bytes, "finish")
+        end
+
+        if not compressed then
+            ngx.log(ngx.WARN, "compression failed: ", err, ", falling back")
+            for i = 1, index, 2 do
+                local crc32_val, str, msg_len = message_package(
+                    messages[i], messages[i + 1], message_version)
+                req[off + 1] = str_int64(0)
+                req[off + 2] = str_int32(msg_len)
+                req[off + 3] = str_int32(crc32_val)
+                req[off + 4] = str
+                off = off + 4
+                msg_set_size = msg_set_size + msg_len + 12
+            end
+            req[self.offset] = str_int32(msg_set_size)
+            self.offset = off + 1
+            self.len = self.len + 4 + msg_set_size
+            return
+        end
+
+        local wrapper_crc, wrapper_str, wrapper_msg_len = message_package(
+            nil, compressed, message_version, compression)
+
+        req[off + 1] = str_int64(0)
+        req[off + 2] = str_int32(wrapper_msg_len)
+        req[off + 3] = str_int32(wrapper_crc)
+        req[off + 4] = wrapper_str
 
         off = off + 4
-        msg_set_size = msg_set_size + msg_len + 12
+        msg_set_size = wrapper_msg_len + 12
     end
 
     req[self.offset] = str_int32(msg_set_size) -- MessageSetSize
