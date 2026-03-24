@@ -1,8 +1,8 @@
-package = "lua-resty-kafka"
-version = "0.23-lz4"
+package = "lua-resty-kafka-lz4"
+version = "0.23-1"
 source = {
    url = "https://github.com/zhaoops/lua-resty-kafka",
-   tag = "v0.23-lz4"
+   tag = "v0.23-1"
 }
 description = {
    summary = "Lua Kafka client driver for the ngx_lua based on the cosocket API (with LZ4 compression)",
