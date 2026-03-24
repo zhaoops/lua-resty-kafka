@@ -76,7 +76,7 @@ local function produce_encode(self, topic_partitions)
             req:int32(partition_id)
 
             -- MessageSetSize and MessageSet
-            req:message_set(buffer.queue, buffer.index)
+            req:message_set(buffer.queue, buffer.index, self.compression)
         end
     end
 
@@ -335,6 +335,7 @@ function _M.new(self, broker_list, producer_config, cluster_name)
         partitioner = opts.partitioner or default_partitioner,
         error_handle = opts.error_handle,
         api_version = opts.api_version or API_VERSION_V1,
+        compression = opts.compression or request.COMPRESSION_NONE,
         async = async,
         socket_config = cli.socket_config,
         _timer_flushing_buffer = false,
