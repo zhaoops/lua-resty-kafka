@@ -1,7 +1,7 @@
 package = "lua-resty-kafka-lz4"
 version = "0.23-1"
 source = {
-   url = "https://github.com/zhaoops/lua-resty-kafka",
+   url = "git+https://github.com/zhaoops/lua-resty-kafka",
    tag = "v0.23.1"
 }
 description = {
